@@ -1,0 +1,32 @@
+# Explanation: Default values for our Flask application.
+# These values can be overridden during Helm installation/upgrade.
+
+replicaCount: 2 # Default to 2 replicas for high availability
+
+image:
+  # IMPORTANT: Replace YOUR_AWS_ACCOUNT_ID and YOUR_AWS_REGION with your actual values!
+  repository: 694862618269.dkr.ecr.us-east-1.amazonaws.com/my-flask-app-repo # <<< REPLACE THIS!
+  tag: latest # This will be dynamically replaced by buildspec.yml
+  pullPolicy: Always # Ensure EKS pulls the latest image from ECR
+
+service:
+  type: LoadBalancer # Expose via LoadBalancer for external access
+  port: 80 # Standard HTTP port for ALB
+  targetPort: 5000 # Flask app listens on 5000
+
+env:
+  APP_CONFIG_MESSAGE: "Deployed by CI/CD Pipeline!"
+  APP_SECRET_KEY: "pipeline_secret_value" # In production, use Kubernetes Secrets!
+  # IMPORTANT: Replace YOUR_RDS_ENDPOINT with the actual endpoint from Lab 15!
+  DB_HOST: "my-flask-app-db.c1qkikkoozqc.us-east-1.rds.amazonaws.com" # <<< REPLACE THIS!
+  DB_NAME: "mydatabase"
+  DB_USER: "myuser"
+  DB_PASSWORD: "mypassword" # IMPORTANT: Use a Secret in production!
+
+resources:
+  limits:
+    cpu: 400m
+    memory: 256Mi
+  requests:
+    cpu: 200m
+    memory: 128Mi

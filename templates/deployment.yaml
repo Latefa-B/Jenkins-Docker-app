@@ -1,0 +1,61 @@
+# Explanation: This is a Kubernetes Deployment template.
+# Helm uses Go templating (e.g., {{ .Values.image.repository }}) to inject values.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "my-flask-chart.fullname" . }} # Generates a unique name for the deployment
+  labels:
+    {{- include "my-flask-chart.labels" . | nindent 4 }} # Injects common labels
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }} # Get replica count from values.yaml
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "my-flask-chart.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "my-flask-chart.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "my-flask-chart.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}" # Image and tag from values.yaml
+          imagePullPolicy: {{ .Values.image.pullPolicy }} # Pull policy from values.yaml
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }} # Container port from values.yaml
+              protocol: TCP
+          # Explanation: Inject environment variables from values.yaml
+          env:
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: "{{ $value }}"
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
