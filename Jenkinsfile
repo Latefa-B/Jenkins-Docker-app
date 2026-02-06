@@ -33,6 +33,7 @@ pipeline {
                 script {
                     echo "--- Building Docker Image: ${IMAGE_NAME}:${IMAGE_TAG} ---"
                     sh """
+                    # Docker commands run as root implicitly in the container
                     docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:${LATEST_TAG} .
                     """
                 }
@@ -116,7 +117,6 @@ spec:
       targetPort: 5000
 """
 
-                        // Apply the manifest
                         sh """
                         echo "${k8sManifest}" | kubectl apply -f -
                         """
@@ -143,4 +143,3 @@ spec:
         }
     }
 }
-
