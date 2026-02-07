@@ -1,12 +1,11 @@
-# Explanation: Default values for our Flask application.
+# Default values for our Flask application.
 # These values can be overridden during Helm installation/upgrade.
 
 replicaCount: 2 # Default to 2 replicas for high availability
 
 image:
-  # IMPORTANT: Replace YOUR_AWS_ACCOUNT_ID and YOUR_AWS_REGION with your actual values!
-  repository: 694862618269.dkr.ecr.us-east-1.amazonaws.com/my-flask-app-repo # <<< REPLACE THIS!
-  tag: latest # This will be dynamically replaced by buildspec.yml
+  repository: 694862618269.dkr.ecr.us-east-1.amazonaws.com/my-flask-app-repo # ECR repository
+  tag: latest # Dynamically replaced by buildspec.yml or Jenkins pipeline
   pullPolicy: Always # Ensure EKS pulls the latest image from ECR
 
 service:
@@ -14,11 +13,16 @@ service:
   port: 80 # Standard HTTP port for ALB
   targetPort: 5000 # Flask app listens on 5000
 
+autoscaling:
+  enabled: false # Set true to enable Horizontal Pod Autoscaler
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
 env:
   APP_CONFIG_MESSAGE: "Deployed by CI/CD Pipeline!"
   APP_SECRET_KEY: "pipeline_secret_value" # In production, use Kubernetes Secrets!
-  # IMPORTANT: Replace YOUR_RDS_ENDPOINT with the actual endpoint from Lab 15!
-  DB_HOST: "my-flask-app-db.c1qkikkoozqc.us-east-1.rds.amazonaws.com" # <<< REPLACE THIS!
+  DB_HOST: "my-flask-app-db.c1qkikkoozqc.us-east-1.rds.amazonaws.com"
   DB_NAME: "mydatabase"
   DB_USER: "myuser"
   DB_PASSWORD: "mypassword" # IMPORTANT: Use a Secret in production!
