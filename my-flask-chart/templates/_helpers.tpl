@@ -8,3 +8,14 @@
 app.kubernetes.io/name: {{ include "my-flask-chart.fullname" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
+
+{{/* Define a "name" helper for selector labels */}}
+{{- define "my-flask-chart.name" -}}
+{{ .Chart.Name }}
+{{- end -}}
+
+{{/* Define selector labels for deployments */}}
+{{- define "my-flask-chart.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "my-flask-chart.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
