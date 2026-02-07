@@ -2,6 +2,8 @@
 # These values can be overridden during Helm installation/upgrade.
 
 replicaCount: 2 # Default to 2 replicas for high availability
+serviceAccount:
+  name: ""  # Empty will make it fallback to fullname
 
 image:
   repository: 694862618269.dkr.ecr.us-east-1.amazonaws.com/my-flask-app-repo # ECR repository
