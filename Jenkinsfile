@@ -39,7 +39,7 @@ pipeline {
                       docker build \
                         -t ${IMAGE_NAME}:${IMAGE_TAG} \
                         -t ${IMAGE_NAME}:${LATEST_TAG} \
-                        ./jenkins-git-app
+                        ./jenkins-custom-agent
                     """
                 }
             }
