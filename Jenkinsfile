@@ -1,23 +1,26 @@
 pipeline {
     agent {
-        label 'docker-agent' // Must match the agent label from Lab 4
+        label 'docker-agent'
     }
 
     environment {
-        // Local image name used before tagging for ECR
         DOCKERHUB_USERNAME = 'latefab'
-        IMAGE_NAME = "${DOCKERHUB_USERNAME}/jenkins-docker-app"
-        IMAGE_TAG = "${env.BUILD_NUMBER}"
-        LATEST_TAG = "latest"
+        IMAGE_NAME         = "${DOCKERHUB_USERNAME}/jenkins-docker-app"
+        IMAGE_TAG          = "${env.BUILD_NUMBER}"
+        LATEST_TAG         = "latest"
 
-        // AWS / ECR / EKS configuration
-        AWS_REGION     = 'us-east-1'          // e.g. us-east-1
-        AWS_ACCOUNT_ID = '694862618269'      // e.g. 123456789012
-        ECR_REPO_NAME  = 'my-flask-app-repo'        // existing ECR repo
+        // AWS / ECR configuration
+        AWS_REGION     = 'us-east-1'
+        AWS_ACCOUNT_ID = '694862618269'
+        ECR_REPO_NAME  = 'my-flask-app-repo'
         ECR_REPO_URI   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}"
 
-        EKS_CLUSTER_NAME      = 'my-k8s-cluster'    // your EKS cluster name
-        KUBERNETES_NAMESPACE  = 'default'
+        // EKS configuration
+        EKS_CLUSTER_NAME     = 'my-k8s-cluster'
+        KUBERNETES_NAMESPACE = 'default'
+
+        // RDS
+        RDS_ENDPOINT = 'my-flask-app-db.c1qkikkoozqc.us-east-1.rds.amazonaws.com'
     }
 
     stages {
@@ -31,10 +34,12 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    echo "--- Building Docker Image: ${IMAGE_NAME}:${IMAGE_TAG} ---"
+                    echo "--- Building Docker Image ---"
                     sh """
-                    # Docker commands run as root implicitly in the container
-                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:${LATEST_TAG} .
+                      docker build \
+                        -t ${IMAGE_NAME}:${IMAGE_TAG} \
+                        -t ${IMAGE_NAME}:${LATEST_TAG} \
+                        ./jenkins-git-app
                     """
                 }
             }
@@ -42,89 +47,67 @@ pipeline {
 
         stage('Push Docker Image to ECR') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
+                withCredentials([
+                    [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']
+                ]) {
                     script {
                         echo "--- Logging in to AWS ECR ---"
                         sh """
-                        aws ecr get-login-password --region ${AWS_REGION} \
+                          aws ecr get-login-password --region ${AWS_REGION} \
                           | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
                         """
 
-                        echo "--- Tagging image for ECR ---"
+                        echo "--- Tagging Docker Image ---"
                         sh """
-                        docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_REPO_URI}:${IMAGE_TAG}
-                        docker tag ${IMAGE_NAME}:${LATEST_TAG} ${ECR_REPO_URI}:${LATEST_TAG}
+                          docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_REPO_URI}:${IMAGE_TAG}
+                          docker tag ${IMAGE_NAME}:${LATEST_TAG} ${ECR_REPO_URI}:${LATEST_TAG}
                         """
 
                         echo "--- Pushing Docker Image to ECR ---"
                         sh """
-                        docker push ${ECR_REPO_URI}:${IMAGE_TAG}
-                        docker push ${ECR_REPO_URI}:${LATEST_TAG}
+                          docker push ${ECR_REPO_URI}:${IMAGE_TAG}
+                          docker push ${ECR_REPO_URI}:${LATEST_TAG}
                         """
                     }
                 }
             }
         }
 
-        stage('Deploy to EKS') {
+        stage('Deploy to EKS with Helm') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
+                withCredentials([
+                    [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']
+                ]) {
                     script {
                         echo "--- Configuring kubectl for EKS ---"
                         sh """
-                        aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
-                        kubectl config set-context --current --namespace ${KUBERNETES_NAMESPACE}
+                          aws eks update-kubeconfig \
+                            --name ${EKS_CLUSTER_NAME} \
+                            --region ${AWS_REGION}
+
+                          kubectl config set-context --current --namespace ${KUBERNETES_NAMESPACE}
                         """
 
-                        echo "--- Applying Kubernetes manifests ---"
-
-                        def k8sManifest = """
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: jenkins-deployed-app
-  labels:
-    app: jenkins-deployed-app
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: jenkins-deployed-app
-  template:
-    metadata:
-      labels:
-        app: jenkins-deployed-app
-    spec:
-      containers:
-      - name: flask-app
-        image: ${ECR_REPO_URI}:${IMAGE_TAG}
-        ports:
-        - containerPort: 5000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: jenkins-deployed-app-service
-  labels:
-    app: jenkins-deployed-app
-spec:
-  type: LoadBalancer
-  selector:
-    app: jenkins-deployed-app
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 5000
-"""
-
-                        sh """
-                        echo "${k8sManifest}" | kubectl apply -f -
-                        """
-
-                        echo "--- Waiting for Deployment to be ready ---"
-                        sh """
-                        kubectl rollout status deployment/jenkins-deployed-app --timeout=300s
-                        """
+                        echo "--- Deploying Helm Chart ---"
+                        dir('my-flask-chart') {
+                            sh """
+                              helm upgrade my-flask-app-release . \
+                                --install \
+                                --atomic \
+                                --wait \
+                                --timeout 5m \
+                                --set image.repository=${ECR_REPO_URI} \
+                                --set image.tag=${IMAGE_TAG} \
+                                --set service.type=LoadBalancer \
+                                --set service.port=80 \
+                                --set service.targetPort=5000 \
+                                --set env.DB_HOST=${RDS_ENDPOINT} \
+                                --set env.DB_NAME=mydatabase \
+                                --set env.DB_USER=myuser \
+                                --set env.DB_PASSWORD=mypassword \
+                                --set replicaCount=2
+                            """
+                        }
                     }
                 }
             }
@@ -136,10 +119,10 @@ spec:
             echo "Pipeline finished. Status: ${currentBuild.result}"
         }
         success {
-            echo "Congratulations! Build and deployment to EKS succeeded."
+            echo "✅ Build, Push, and Helm Deployment succeeded!"
         }
         failure {
-            echo "Build or deployment failed. Please check the logs."
+            echo "❌ Pipeline failed. Check logs for details."
         }
     }
 }
