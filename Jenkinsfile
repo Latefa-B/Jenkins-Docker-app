@@ -4,18 +4,19 @@ pipeline {
     }
 
     environment {
+        // Docker / Image
         DOCKERHUB_USERNAME = 'latefab'
         IMAGE_NAME         = "${DOCKERHUB_USERNAME}/jenkins-docker-app"
         IMAGE_TAG          = "${env.BUILD_NUMBER}"
         LATEST_TAG         = "latest"
 
-        // AWS / ECR configuration
+        // AWS / ECR
         AWS_REGION     = 'us-east-1'
         AWS_ACCOUNT_ID = '694862618269'
         ECR_REPO_NAME  = 'my-flask-app-repo'
         ECR_REPO_URI   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}"
 
-        // EKS configuration
+        // EKS
         EKS_CLUSTER_NAME     = 'my-k8s-cluster'
         KUBERNETES_NAMESPACE = 'default'
 
@@ -93,9 +94,8 @@ pipeline {
                             sh """
                               helm upgrade my-flask-app-release . \
                                 --install \
-                                --atomic \
                                 --wait \
-                                --timeout 5m \
+                                --timeout 10m \
                                 --set image.repository=${ECR_REPO_URI} \
                                 --set image.tag=${IMAGE_TAG} \
                                 --set service.type=LoadBalancer \
