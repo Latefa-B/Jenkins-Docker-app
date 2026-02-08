@@ -94,8 +94,7 @@ pipeline {
                             sh """
                               helm upgrade my-flask-app-release . \
                                 --install \
-                                --wait \
-                                --timeout 10m \
+                                --timeout 15m \
                                 --set image.repository=${ECR_REPO_URI} \
                                 --set image.tag=${IMAGE_TAG} \
                                 --set service.type=LoadBalancer \
