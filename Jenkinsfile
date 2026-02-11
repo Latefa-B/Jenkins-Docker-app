@@ -1,6 +1,6 @@
 pipeline {
     agent {
-        label 'docker-agent' // Ensure this runs on your agent with Docker, AWS CLI, Kubectl, Helm, Terraform
+        label 'docker-agent' // Must have Docker, AWS CLI, Kubectl, Helm, Terraform
     }
 
     environment {
@@ -10,7 +10,7 @@ pipeline {
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         LATEST_TAG = "latest"
 
-        // AWS
+        // AWS / ECR
         ECR_REPO_URI = '694862618269.dkr.ecr.us-east-1.amazonaws.com/my-flask-app-repo'
         AWS_REGION = 'us-east-1'
         AWS_ACCOUNT_ID = '694862618269'
@@ -24,35 +24,31 @@ pipeline {
 
         // Terraform Infra
         TERRAFORM_INFRA_REPO = 'https://github.com/Latefa-B/jenkins-terraform-infra.git'
+        TERRAFORM_BRANCH = 'latefa-branch'   // ✅ Correct branch
         TERRAFORM_STATE_BUCKET = "jenkins-terraform-state-${AWS_ACCOUNT_ID}"
         TERRAFORM_STATE_KEY = "s3-bucket-infra/terraform.tfstate"
         TERRAFORM_LOCK_TABLE = "terraform-lock-table"
-
-        // App Version S3 Bucket
-        APP_VERSION_S3_BUCKET = "app-version-bucket-${AWS_ACCOUNT_ID}"
-        APP_VERSION_FILE_KEY = "current-app-version.txt"
     }
 
     stages {
         stage('Checkout Application Code') {
             steps {
-                // Checkout the primary application repository
                 checkout scm
             }
         }
 
         stage('Checkout Terraform Infra Code') {
             steps {
-                // Checkout Terraform infra repo into dedicated subfolder
                 dir('jenkins-terraform-infra') {
-                    git branch: 'main', url: "${TERRAFORM_INFRA_REPO}", changelog: false, poll: false
+                    deleteDir()  // clean folder before clone
+                    git branch: "${TERRAFORM_BRANCH}", url: "${TERRAFORM_INFRA_REPO}", changelog: false, poll: false
                 }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                dir("${env.WORKSPACE}") { // Make sure we're in the root of the app repo
+                dir("${env.WORKSPACE}") {
                     script {
                         echo "--- Building Docker Image: ${IMAGE_NAME}:${IMAGE_TAG} ---"
                         sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:${LATEST_TAG} ."
@@ -63,7 +59,7 @@ pipeline {
 
         stage('Push Docker Image to ECR') {
             steps {
-                withCredentials([aws(credentialsId: 'aws-credentials', variable: 'AWS_CREDS')]) {
+                withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
                     script {
                         echo "--- Logging in to AWS ECR ---"
                         sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO_URI}"
@@ -82,25 +78,30 @@ pipeline {
 
         stage('Update App Version in Infra') {
             steps {
-                withCredentials([aws(credentialsId: 'aws-credentials', variable: 'AWS_CREDS')]) {
-                    dir('jenkins-terraform-infra') { // Ensure Terraform commands run inside infra folder
-                        script {
-                            echo "--- Terraform Init for App Version Infra ---"
-                            sh """
-                                terraform init \
-                                  -backend-config="bucket=${TERRAFORM_STATE_BUCKET}" \
-                                  -backend-config="key=${TERRAFORM_STATE_KEY}" \
-                                  -backend-config="region=${AWS_REGION}" \
-                                  -backend-config="encrypt=true" \
-                                  -backend-config="dynamodb_table=${TERRAFORM_LOCK_TABLE}"
-                            """
+                withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
+                    dir('jenkins-terraform-infra') {
+                        // ✅ Debug: verify Terraform files exist
+                        sh 'ls -la'
 
-                            echo "--- Terraform Plan for App Version Infra ---"
-                            sh "terraform plan -out=tfplan.out -var='aws_region=${AWS_REGION}' -var='app_version_content=${IMAGE_TAG}'"
+                        echo "--- Terraform Init ---"
+                        sh """
+                            terraform init \
+                                -backend-config="bucket=${TERRAFORM_STATE_BUCKET}" \
+                                -backend-config="key=${TERRAFORM_STATE_KEY}" \
+                                -backend-config="region=${AWS_REGION}" \
+                                -backend-config="encrypt=true" \
+                                -backend-config="dynamodb_table=${TERRAFORM_LOCK_TABLE}"
+                        """
 
-                            echo "--- Terraform Apply for App Version Infra ---"
-                            sh "terraform apply -auto-approve tfplan.out"
-                        }
+                        echo "--- Terraform Plan ---"
+                        sh """
+                            terraform plan -out=tfplan.out \
+                                -var="aws_region=${AWS_REGION}" \
+                                -var="app_version_content=${IMAGE_TAG}"
+                        """
+
+                        echo "--- Terraform Apply ---"
+                        sh "terraform apply -auto-approve tfplan.out"
                     }
                 }
             }
@@ -108,17 +109,16 @@ pipeline {
 
         stage('Deploy to EKS with Helm') {
             steps {
-                withCredentials([aws(credentialsId: 'aws-credentials', variable: 'AWS_CREDS')]) {
-                    dir("${env.WORKSPACE}") { // Helm runs from app repo
-                        script {
-                            echo "--- Configuring kubectl for EKS ---"
-                            sh "aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}"
-                            sh "kubectl config use-context arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${EKS_CLUSTER_NAME}"
-                            sh "kubectl config set-context --current --namespace ${KUBERNETES_NAMESPACE}"
+                withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
+                    dir("${env.WORKSPACE}") {
+                        echo "--- Configuring kubectl for EKS ---"
+                        sh "aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}"
+                        sh "kubectl config use-context arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${EKS_CLUSTER_NAME}"
+                        sh "kubectl config set-context --current --namespace ${KUBERNETES_NAMESPACE}"
 
-                            echo "--- Deploying Helm Chart to EKS ---"
-                            dir('my-flask-chart') {
-                                sh """
+                        echo "--- Deploying Helm Chart ---"
+                        dir('my-flask-chart') {
+                            sh """
                                 helm upgrade my-flask-app-release . --install --atomic --wait --timeout 5m \
                                   --set image.repository=${ECR_REPO_URI} \
                                   --set image.tag=${IMAGE_TAG} \
@@ -130,8 +130,7 @@ pipeline {
                                   --set env.DB_USER=myuser \
                                   --set env.DB_PASSWORD=mypassword \
                                   --set replicaCount=2
-                                """
-                            }
+                            """
                         }
                     }
                 }
@@ -144,10 +143,10 @@ pipeline {
             echo "Pipeline finished. Status: ${currentBuild.result}"
         }
         success {
-            echo "Congratulations! Full Stack Deployment succeeded."
+            echo "🎉 Full Stack Deployment succeeded!"
         }
         failure {
-            echo "Full Stack Deployment failed. Please check logs."
+            echo "❌ Full Stack Deployment failed. Check logs!"
         }
     }
 }
