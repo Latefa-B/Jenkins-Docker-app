@@ -4,14 +4,28 @@ pipeline {
     environment {
         AWS_REGION = 'us-east-1'                      // Set your AWS region
         ECR_REPO_URI = '694862618269.dkr.ecr.us-east-1.amazonaws.com/my-flask-app-repo' // Replace with your ECR URI
+        AWS_ACCOUNT_ID = "694862618269" // Your AWS Account ID
+        DOCKERHUB_USERNAME = 'latefab'
+        IMAGE_NAME = "${DOCKERHUB_USERNAME}/jenkins-python-app" // This is the local image name
         IMAGE_TAG = "${env.BUILD_NUMBER}"
-        TERRAFORM_STATE_BUCKET = 'my-terraform-bucket' // Replace with your bucket
-        TERRAFORM_STATE_KEY = 'jenkins-python-app/terraform.tfstate'
-        TERRAFORM_LOCK_TABLE = 'terraform-locks'
+        LATEST_TAG = "latest"
+        EKS_CLUSTER_NAME = 'my-k8s-cluster' // From Lab 14
+        KUBERNETES_NAMESPACE = 'default' // Or your target namespace
+        RDS_ENDPOINT = 'my-flask-app-db.c1qkikkoozqc.us-east-1.rds.amazonaws.com' // e.g., my-flask-app-db.abcdef123456.us-east-1.rds.amazonaws.com
+        TERRAFORM_INFRA_REPO = 'https://github.com/Latefa-B/jenkins-terraform-infra.git'
+        TERRAFORM_STATE_BUCKET = 'jenkins-terraform-state-694862618269' // Replace with your bucket
+        TERRAFORM_STATE_KEY = "s3-bucket-infra/terraform.tfstate"
+        TERRAFORM_LOCK_TABLE = "terraform-lock-table"
         HELM_RELEASE_NAME = 'jenkins-python-app'
         HELM_NAMESPACE = 'default'
-        KUBE_CONFIG = '/home/jenkins/.kube/config'
+        KUBE_CONFIG = '/home/jenkins/.kube/config
+
+        # App Version S3 Bucket (from Terraform infra)
+        APP_VERSION_S3_BUCKET = "app-version-bucket-${AWS_ACCOUNT_ID}"
+        APP_VERSION_FILE_KEY = "current-app-version.txt"
     }
+
+
 
     stages {
 
