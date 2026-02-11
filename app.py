@@ -1,5 +1,4 @@
 # app.py
-# Edited file to Trigger full CI/CD pipeline with Helm to EKS
 from flask import Flask
 import os
 
