@@ -29,7 +29,7 @@ pipeline {
         TERRAFORM_STATE_KEY = "s3-bucket-infra/terraform.tfstate"
         TERRAFORM_LOCK_TABLE = "terraform-lock-table"
 
-        # App Version S3 Bucket (from Terraform infra)
+        // App Version S3 Bucket (from Terraform infra)
         APP_VERSION_S3_BUCKET = "app-version-bucket-${AWS_ACCOUNT_ID}"
         APP_VERSION_FILE_KEY = "current-app-version.txt"
     }
