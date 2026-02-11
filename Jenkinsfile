@@ -1,6 +1,6 @@
 pipeline {
     agent {
-        label 'docker-agent' // Make sure this node has Docker, AWS CLI, kubectl, Helm, Terraform
+        label 'docker-agent'
     }
 
     environment {
@@ -34,17 +34,16 @@ pipeline {
     }
 
     stages {
-
         stage('Checkout Application Code') {
             steps {
-                checkout scm
+                checkout([$class: 'GitSCM', branches: [[name: 'refs/heads/latefa-branch']], userRemoteConfigs: [[url: 'https://github.com/Latefa-B/jenkins-docker-app.git']]])
             }
         }
 
         stage('Checkout Terraform Infra Code') {
             steps {
                 dir('jenkins-terraform-infra') {
-                    git branch: 'main', url: "${TERRAFORM_INFRA_REPO}", changelog: false, poll: false
+                    git branch: 'latefa-branch', url: "${TERRAFORM_INFRA_REPO}", changelog: false, poll: false
                 }
             }
         }
@@ -62,20 +61,18 @@ pipeline {
 
         stage('Push Docker Image to ECR') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'aws-credentials',
-                                                 usernameVariable: 'AWS_ACCESS_KEY_ID',
-                                                 passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
                     script {
                         echo "--- Logging in to AWS ECR ---"
                         sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO_URI}"
 
-                        echo "--- Tagging Docker Image for ECR ---"
-                        sh "docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_REPO_URI}:${IMAGE_TAG}"
-                        sh "docker tag ${IMAGE_NAME}:${LATEST_TAG} ${ECR_REPO_URI}:${LATEST_TAG}"
-
-                        echo "--- Pushing Docker Image to ECR ---"
-                        sh "docker push ${ECR_REPO_URI}:${IMAGE_TAG}"
-                        sh "docker push ${ECR_REPO_URI}:${LATEST_TAG}"
+                        echo "--- Tagging and Pushing Image ---"
+                        sh """
+                            docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_REPO_URI}:${IMAGE_TAG}
+                            docker tag ${IMAGE_NAME}:${LATEST_TAG} ${ECR_REPO_URI}:${LATEST_TAG}
+                            docker push ${ECR_REPO_URI}:${IMAGE_TAG}
+                            docker push ${ECR_REPO_URI}:${LATEST_TAG}
+                        """
                     }
                 }
             }
@@ -83,9 +80,7 @@ pipeline {
 
         stage('Update App Version in Infra') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'aws-credentials',
-                                                 usernameVariable: 'AWS_ACCESS_KEY_ID',
-                                                 passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
                     dir('jenkins-terraform-infra') {
                         script {
                             echo "--- Terraform Init ---"
@@ -111,14 +106,11 @@ pipeline {
 
         stage('Deploy to EKS with Helm') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'aws-credentials',
-                                                 usernameVariable: 'AWS_ACCESS_KEY_ID',
-                                                 passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
                     dir("${env.WORKSPACE}") {
                         script {
                             echo "--- Configuring kubectl for EKS ---"
-                            sh "aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}"
-                            sh "kubectl config use-context arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${EKS_CLUSTER_NAME}"
+                            sh "aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --alias ${EKS_CLUSTER_NAME}"
                             sh "kubectl config set-context --current --namespace ${KUBERNETES_NAMESPACE}"
 
                             echo "--- Deploying Helm Chart ---"
@@ -142,7 +134,6 @@ pipeline {
                 }
             }
         }
-
     }
 
     post {
@@ -150,11 +141,10 @@ pipeline {
             echo "Pipeline finished. Status: ${currentBuild.result}"
         }
         success {
-            echo "🎉 Full Stack Deployment succeeded!"
+            echo "✅ Full Stack Deployment succeeded!"
         }
         failure {
             echo "❌ Full Stack Deployment failed. Check logs!"
         }
     }
 }
-
