@@ -18,7 +18,7 @@ pipeline {
         TERRAFORM_LOCK_TABLE = "terraform-lock-table"
         HELM_RELEASE_NAME = 'jenkins-python-app'
         HELM_NAMESPACE = 'default'
-        KUBE_CONFIG = '/home/jenkins/.kube/config
+        KUBE_CONFIG = '/home/jenkins/.kube/config'
 
         # App Version S3 Bucket (from Terraform infra)
         APP_VERSION_S3_BUCKET = "app-version-bucket-${AWS_ACCOUNT_ID}"
