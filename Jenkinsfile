@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         AWS_REGION = 'us-east-1'                      // Set your AWS region
-        ECR_REPO_URI = '123456789012.dkr.ecr.us-east-1.amazonaws.com/jenkins-python-app' // Replace with your ECR URI
+        ECR_REPO_URI = '694862618269.dkr.ecr.us-east-1.amazonaws.com/my-flask-app-repo' // Replace with your ECR URI
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         TERRAFORM_STATE_BUCKET = 'my-terraform-bucket' // Replace with your bucket
         TERRAFORM_STATE_KEY = 'jenkins-python-app/terraform.tfstate'
