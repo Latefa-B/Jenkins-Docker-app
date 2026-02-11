@@ -54,7 +54,7 @@ pipeline {
                 script {
                     echo "--- Building Docker Image: ${IMAGE_NAME}:${IMAGE_TAG} ---"
                     // Build from the jenkins-git-app folder (current workspace root)
-                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:${LATEST_TAG} ./jenkins-git-app"
+                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:${LATEST_TAG} ."
                 }
             }
         }
