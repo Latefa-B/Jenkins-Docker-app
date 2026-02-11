@@ -1,6 +1,6 @@
 pipeline {
     agent {
-        label 'docker-agent'
+        label 'docker-agent' // Make sure this node has Docker, AWS CLI, kubectl, Helm, Terraform
     }
 
     environment {
@@ -10,7 +10,7 @@ pipeline {
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         LATEST_TAG = "latest"
 
-        // AWS / ECR
+        // AWS
         ECR_REPO_URI = '694862618269.dkr.ecr.us-east-1.amazonaws.com/my-flask-app-repo'
         AWS_REGION = 'us-east-1'
         AWS_ACCOUNT_ID = '694862618269'
@@ -22,15 +22,19 @@ pipeline {
         // RDS
         RDS_ENDPOINT = 'my-flask-app-db.c1qkikkoozqc.us-east-1.rds.amazonaws.com'
 
-        // Terraform
+        // Terraform Infra
         TERRAFORM_INFRA_REPO = 'https://github.com/Latefa-B/jenkins-terraform-infra.git'
-        TERRAFORM_BRANCH = 'latefa-branch'
         TERRAFORM_STATE_BUCKET = "jenkins-terraform-state-${AWS_ACCOUNT_ID}"
         TERRAFORM_STATE_KEY = "s3-bucket-infra/terraform.tfstate"
         TERRAFORM_LOCK_TABLE = "terraform-lock-table"
+
+        // App Version S3 Bucket
+        APP_VERSION_S3_BUCKET = "app-version-bucket-${AWS_ACCOUNT_ID}"
+        APP_VERSION_FILE_KEY = "current-app-version.txt"
     }
 
     stages {
+
         stage('Checkout Application Code') {
             steps {
                 checkout scm
@@ -40,8 +44,7 @@ pipeline {
         stage('Checkout Terraform Infra Code') {
             steps {
                 dir('jenkins-terraform-infra') {
-                    deleteDir()
-                    git branch: "${TERRAFORM_BRANCH}", url: "${TERRAFORM_INFRA_REPO}"
+                    git branch: 'main', url: "${TERRAFORM_INFRA_REPO}", changelog: false, poll: false
                 }
             }
         }
@@ -49,40 +52,58 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 dir("${env.WORKSPACE}") {
-                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:${LATEST_TAG} ."
+                    script {
+                        echo "--- Building Docker Image: ${IMAGE_NAME}:${IMAGE_TAG} ---"
+                        sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:${LATEST_TAG} ."
+                    }
                 }
             }
         }
 
         stage('Push Docker Image to ECR') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
-                    sh """
-                        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO_URI}
-                        docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_REPO_URI}:${IMAGE_TAG}
-                        docker tag ${IMAGE_NAME}:${LATEST_TAG} ${ECR_REPO_URI}:${LATEST_TAG}
-                        docker push ${ECR_REPO_URI}:${IMAGE_TAG}
-                        docker push ${ECR_REPO_URI}:${LATEST_TAG}
-                    """
+                withCredentials([usernamePassword(credentialsId: 'aws-credentials',
+                                                 usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                                 passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    script {
+                        echo "--- Logging in to AWS ECR ---"
+                        sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO_URI}"
+
+                        echo "--- Tagging Docker Image for ECR ---"
+                        sh "docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_REPO_URI}:${IMAGE_TAG}"
+                        sh "docker tag ${IMAGE_NAME}:${LATEST_TAG} ${ECR_REPO_URI}:${LATEST_TAG}"
+
+                        echo "--- Pushing Docker Image to ECR ---"
+                        sh "docker push ${ECR_REPO_URI}:${IMAGE_TAG}"
+                        sh "docker push ${ECR_REPO_URI}:${LATEST_TAG}"
+                    }
                 }
             }
         }
 
         stage('Update App Version in Infra') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
+                withCredentials([usernamePassword(credentialsId: 'aws-credentials',
+                                                 usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                                 passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
                     dir('jenkins-terraform-infra') {
-                        sh 'ls -la' // Debug: verify .tf files exist
-                        sh """
-                            terraform init \
-                                -backend-config="bucket=${TERRAFORM_STATE_BUCKET}" \
-                                -backend-config="key=${TERRAFORM_STATE_KEY}" \
-                                -backend-config="region=${AWS_REGION}" \
-                                -backend-config="encrypt=true" \
-                                -backend-config="dynamodb_table=${TERRAFORM_LOCK_TABLE}"
-                        """
-                        sh "terraform plan -out=tfplan.out -var='aws_region=${AWS_REGION}' -var='app_version_content=${IMAGE_TAG}'"
-                        sh "terraform apply -auto-approve tfplan.out"
+                        script {
+                            echo "--- Terraform Init ---"
+                            sh """
+                                terraform init \
+                                  -backend-config="bucket=${TERRAFORM_STATE_BUCKET}" \
+                                  -backend-config="key=${TERRAFORM_STATE_KEY}" \
+                                  -backend-config="region=${AWS_REGION}" \
+                                  -backend-config="encrypt=true" \
+                                  -backend-config="dynamodb_table=${TERRAFORM_LOCK_TABLE}"
+                            """
+
+                            echo "--- Terraform Plan ---"
+                            sh "terraform plan -out=tfplan.out -var='aws_region=${AWS_REGION}' -var='app_version_content=${IMAGE_TAG}'"
+
+                            echo "--- Terraform Apply ---"
+                            sh "terraform apply -auto-approve tfplan.out"
+                        }
                     }
                 }
             }
@@ -90,4 +111,50 @@ pipeline {
 
         stage('Deploy to EKS with Helm') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', cr]()]()
+                withCredentials([usernamePassword(credentialsId: 'aws-credentials',
+                                                 usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                                 passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    dir("${env.WORKSPACE}") {
+                        script {
+                            echo "--- Configuring kubectl for EKS ---"
+                            sh "aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}"
+                            sh "kubectl config use-context arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${EKS_CLUSTER_NAME}"
+                            sh "kubectl config set-context --current --namespace ${KUBERNETES_NAMESPACE}"
+
+                            echo "--- Deploying Helm Chart ---"
+                            dir('my-flask-chart') {
+                                sh """
+                                helm upgrade my-flask-app-release . --install --atomic --wait --timeout 5m \
+                                  --set image.repository=${ECR_REPO_URI} \
+                                  --set image.tag=${IMAGE_TAG} \
+                                  --set service.type=LoadBalancer \
+                                  --set service.port=80 \
+                                  --set service.targetPort=5000 \
+                                  --set env.DB_HOST=${RDS_ENDPOINT} \
+                                  --set env.DB_NAME=mydatabase \
+                                  --set env.DB_USER=myuser \
+                                  --set env.DB_PASSWORD=mypassword \
+                                  --set replicaCount=2
+                                """
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+
+    post {
+        always {
+            echo "Pipeline finished. Status: ${currentBuild.result}"
+        }
+        success {
+            echo "🎉 Full Stack Deployment succeeded!"
+        }
+        failure {
+            echo "❌ Full Stack Deployment failed. Check logs!"
+        }
+    }
+}
+
