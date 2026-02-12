@@ -16,7 +16,7 @@ pipeline {
         TERRAFORM_STATE_BUCKET = 'jenkins-terraform-state-694862618269' // Replace with your bucket
         TERRAFORM_STATE_KEY = "s3-bucket-infra/terraform.tfstate"
         TERRAFORM_LOCK_TABLE = "terraform-lock-table"
-        HELM_RELEASE_NAME = 'jenkins-python-app'
+        HELM_RELEASE_NAME = 'my-flask-app-release'
         HELM_NAMESPACE = 'default'
         KUBE_CONFIG = '/home/jenkins/.kube/config'
         APP_VERSION_S3_BUCKET = "app-version-bucket-${AWS_ACCOUNT_ID}"
@@ -148,7 +148,7 @@ pipeline {
                             aws configure set default.region ${AWS_REGION}
 
                             # Helm deploy
-                            helm upgrade --install ${HELM_RELEASE_NAME} ./charts/jenkins-python-app \
+                            helm upgrade --install ${HELM_RELEASE_NAME} ./my-flask-chart \
                                 --namespace ${HELM_NAMESPACE} \
                                 --set image.repository=${ECR_REPO_URI} \
                                 --set image.tag=${IMAGE_TAG} \
